@@ -10,6 +10,7 @@
     "test:e2e": "node test/e2e/layout.smoke.mjs",
     "capture:player": "node test/e2e/capture.player.mjs",
     "capture:player:webgpu": "node test/e2e/capture.player.webgpu.mjs",
+    "deploy:worker": "pnpm -s run build && npx wrangler deploy",
     "preview": "vite preview"
   },
   "dependencies": {

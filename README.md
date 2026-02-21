@@ -1,3 +1,5 @@
-Cloudflare Pages settings:
-- Build command: `pnpm run build`
-- Build output directory: `dist`
+Build:
+- `pnpm run build` (outputs `dist/`)
+
+Deploy:
+- `pnpm run deploy:worker`
