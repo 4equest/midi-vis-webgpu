@@ -1,0 +1,1 @@
+# Intentionally no redirects: routing uses hash (/#/...), so direct /tracks access stays 404 on static hosting.

@@ -1,0 +1,143 @@
+:root {
+  --bg-main: #fdfedc;
+  --bg-panel: #ebebbb;
+  --ink: rgba(254, 253, 221, 0.92);
+  --ink-dim: rgba(254, 253, 221, 0.65);
+  --ink-panel: rgba(28, 26, 14, 0.92);
+  --ink-panel-dim: rgba(28, 26, 14, 0.65);
+
+  --note-green: #1cd04b;
+  --note-orange: #f38b0d;
+
+  --frame-w: 1359;
+  --frame-h: 747;
+
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-main);
+  color: var(--ink);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.app-root {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-main);
+}
+
+.app-frame {
+  width: min(100vw, calc(100vh * (var(--frame-w) / var(--frame-h))));
+  height: min(100vh, calc(100vw * (var(--frame-h) / var(--frame-w))));
+  aspect-ratio: var(--frame-w) / var(--frame-h);
+  background: var(--bg-main);
+  overflow: hidden;
+}
+
+.page {
+  height: 100%;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: auto;
+}
+
+.panel {
+  width: min(720px, 92%);
+  padding: 22px 18px;
+  background: var(--bg-panel);
+  border-radius: 10px;
+  max-height: 100%;
+  overflow: auto;
+  /* Settings screens need higher contrast than the player UI. */
+  --ink: var(--ink-panel);
+  --ink-dim: var(--ink-panel-dim);
+  color: var(--ink);
+}
+
+.panel-title {
+  margin: 0 0 14px;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+
+.btn {
+  appearance: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.panel .btn {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.panel input[type='text'],
+.panel input[type='number'],
+.panel select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+}
+
+.panel input[type='checkbox'],
+.panel input[type='radio'] {
+  accent-color: rgba(28, 26, 14, 0.85);
+}
+
+.panel input[type='color'] {
+  width: 44px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.muted {
+  color: var(--ink-dim);
+}
+
+.error {
+  margin-top: 12px;
+  color: #ff5a5a;
+}
+
+.hidden {
+  display: none;
+}
+
