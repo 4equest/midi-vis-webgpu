@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { appState } from '../state/appState'
 import { AudioEngine } from '../lib/audio/audioEngine'
 import { detectChordNameFromMidiNotes } from '../lib/chords/detectChord'
+import { ChordSmoother } from '../lib/chords/chordSmoother'
 import { ActiveNoteTracker } from '../lib/midi/activeNoteTracker'
 import { lowerBoundByStartTick } from '../lib/midi/noteSearch'
 import { MidiTiming } from '../lib/midi/timing'
@@ -75,6 +76,8 @@ const subBeatProgress01 = computed(() => Math.max(0, Math.min(1, subBeat1000.val
 let audio: AudioEngine | null = null
 let noteTracker: ActiveNoteTracker | null = null
 let lastChordUpdateMs = 0
+let chordSmoother: ChordSmoother | null = null
+let lastChordSeconds = Number.NaN
 let isSeeking = false
 let seekMoveListener: ((e: PointerEvent) => void) | null = null
 let seekEndListener: ((e: PointerEvent) => void) | null = null
@@ -194,6 +197,8 @@ onMounted(async () => {
 
     const pianoR = pianoRenderer
     const specR = spectrumRenderer
+    chordSmoother = new ChordSmoother()
+    lastChordSeconds = Number.NaN
 
     let pianoInstances = new Float32Array(8 * 2048)
     const spectrumInstances = new Float32Array(8 * 128)
@@ -378,11 +383,18 @@ onMounted(async () => {
       const dpr = Math.max(1, Math.min(4, window.devicePixelRatio || 1))
 
       // Chord detection + pitch UI (throttled). Skip while scrubbing to avoid O(N) seeks per frame.
-      if (noteTracker && !isSeeking) {
+      if (noteTracker && chordSmoother && !isSeeking) {
+        if (!Number.isFinite(lastChordSeconds) || Math.abs(currentSeconds.value - lastChordSeconds) > 0.1) {
+          chordSmoother.reset('N.C.')
+          chordText.value = 'N.C.'
+        }
+        lastChordSeconds = currentSeconds.value
+
         noteTracker.update(currentSeconds.value)
         const nowMs = performance.now()
         if (nowMs - lastChordUpdateMs >= 80) {
-          chordText.value = detectChordNameFromMidiNotes(noteTracker.getActiveMidiNotes())
+          const raw = detectChordNameFromMidiNotes(noteTracker.getActiveMidiNotes())
+          chordText.value = chordSmoother.update(raw, nowMs)
           lastChordUpdateMs = nowMs
         }
 
@@ -758,6 +770,10 @@ async function seekToSeconds(seconds: number) {
   const t = timing.value
   if (!engine || !t) return
 
+  chordSmoother?.reset('N.C.')
+  chordText.value = 'N.C.'
+  lastChordSeconds = Number.NaN
+
   const clamped = Math.max(0, Math.min(durationSeconds.value, seconds))
   currentSeconds.value = clamped
 
@@ -783,6 +799,10 @@ async function seekToSeconds(seconds: number) {
 function onSeekPointerDown(e: PointerEvent) {
   const engine = audio
   if (!engine) return
+
+  chordSmoother?.reset('N.C.')
+  chordText.value = 'N.C.'
+  lastChordSeconds = Number.NaN
 
   cleanupSeekListeners()
   isSeeking = false

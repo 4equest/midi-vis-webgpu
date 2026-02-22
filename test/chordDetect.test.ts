@@ -41,5 +41,10 @@ describe('detectChordNameFromMidiNotes', () => {
     // C7b9 -> C E G Bb Db
     expect(detectChordNameFromMidiNotes([60, 64, 67, 70, 61])).toBe('C7b9')
   })
+
+  it('falls back to a best-effort chord name when the full pitch set is not detectable', () => {
+    // Pitch classes: C# D D# F G# B (Chord.detect returns [] for the full set).
+    expect(detectChordNameFromMidiNotes([49, 50, 51, 53, 56, 59])).toBe('C#9')
+  })
 })
 
