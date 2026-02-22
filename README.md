@@ -1,6 +1,7 @@
 ブラウザで動作するMidiプレイヤーです。
 
-![midi](https://github.com/user-attachments/assets/0b065ca9-cebc-443b-8eac-aac59e357b77)
+![midi](https://github.com/user-attachments/assets/343a3ea9-18e5-4599-b7d0-058455e5c814)
+
 
 Build:
 - `pnpm run build` (outputs `dist/`)
