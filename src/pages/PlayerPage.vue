@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { appState } from '../state/appState'
@@ -13,6 +13,7 @@ import { easeOutExpo } from '../lib/visual/easing'
 import { getGpuDevice, onGpuDeviceLost, onGpuUncapturedError } from '../lib/webgpu/gpuDevice'
 import { PostProcessChain } from '../lib/webgpu/postProcessChain'
 import { RectRenderer } from '../lib/webgpu/rectRenderer'
+import PlayerSettingsOverlay from '../components/PlayerSettingsOverlay.vue'
 
 const router = useRouter()
 
@@ -29,6 +30,7 @@ onMounted(() => {
 })
 
 const selectedTrackIndices = ref<number[]>([])
+const settingsOpen = ref(false)
 
 const isPlaying = ref(false)
 const playPending = ref(false)
@@ -112,7 +114,7 @@ onMounted(async () => {
     const t = timing.value
     if (!midi || !t) throw new Error('MIDI not loaded.')
 
-    // Snapshot display tracks for this session (the Player page does not support live track toggling).
+    // Initialize display tracks (can be updated live from the in-player settings overlay).
     selectedTrackIndices.value = appState.trackSettings.filter((tr) => tr.enabled).map((tr) => tr.trackIndex)
 
     audio = new AudioEngine({
@@ -127,12 +129,15 @@ onMounted(async () => {
     // Initialize at time=0.
     audio.setPositionSeconds(0)
 
-    noteTracker = new ActiveNoteTracker({
-      midi,
-      trackIndices: selectedTrackIndices.value,
-      includeDrums: false,
-    })
-    noteTracker.seek(0)
+    const rebuildNoteTracker = () => {
+      noteTracker = new ActiveNoteTracker({
+        midi,
+        trackIndices: selectedTrackIndices.value,
+        includeDrums: false,
+      })
+      noteTracker.seek(currentSeconds.value)
+    }
+    rebuildNoteTracker()
 
     const fatalGpuError = (message: string) => {
       if (unmounted || webGpuError.value) return
@@ -190,63 +195,49 @@ onMounted(async () => {
     let pianoInstances = new Float32Array(8 * 2048)
     const spectrumInstances = new Float32Array(8 * 128)
 
-    const bgMain01 = rgb01FromHex(appState.theme.bgMain, [253 / 255, 254 / 255, 220 / 255])
-    const bgPanel01 = rgb01FromHex(appState.theme.bgPanel, [235 / 255, 235 / 255, 187 / 255])
-    const ink01 = rgb01FromHex(appState.theme.ink, [0.98, 0.99, 0.86])
-    const bgMain = { r: bgMain01[0], g: bgMain01[1], b: bgMain01[2], a: 1 }
-    const bgPanel = { r: bgPanel01[0], g: bgPanel01[1], b: bgPanel01[2], a: 1 }
-    const [inkR, inkG, inkB] = ink01
-    const waveStrokeCss = rgbaCssFromHex(appState.theme.ink, 1, 'rgba(254, 253, 221, 1)')
-    const waveStrokeDimCss = rgbaCssFromHex(appState.theme.ink, 0.25, 'rgba(254, 253, 221, 0.25)')
+    let bgMain = { r: 253 / 255, g: 254 / 255, b: 220 / 255, a: 1 }
+    let bgPanel = { r: 235 / 255, g: 235 / 255, b: 187 / 255, a: 1 }
+    let inkR = 0.98
+    let inkG = 0.99
+    let inkB = 0.86
+    let waveStrokeCss = 'rgba(254, 253, 221, 1)'
+    let waveStrokeDimCss = 'rgba(254, 253, 221, 0.25)'
+
+    const updateThemeCache = () => {
+      const bgMain01 = rgb01FromHex(appState.theme.bgMain, [253 / 255, 254 / 255, 220 / 255])
+      const bgPanel01 = rgb01FromHex(appState.theme.bgPanel, [235 / 255, 235 / 255, 187 / 255])
+      const ink01 = rgb01FromHex(appState.theme.ink, [0.98, 0.99, 0.86])
+      bgMain = { r: bgMain01[0], g: bgMain01[1], b: bgMain01[2], a: 1 }
+      bgPanel = { r: bgPanel01[0], g: bgPanel01[1], b: bgPanel01[2], a: 1 }
+      ;[inkR, inkG, inkB] = ink01
+      waveStrokeCss = rgbaCssFromHex(appState.theme.ink, 1, 'rgba(254, 253, 221, 1)')
+      waveStrokeDimCss = rgbaCssFromHex(appState.theme.ink, 0.25, 'rgba(254, 253, 221, 0.25)')
+    }
+    updateThemeCache()
 
     const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 
-    const displayTracks = selectedTrackIndices.value
-      .map((trackIndex) => {
-        const tr = midi.tracks[trackIndex]
-        if (!tr) return null
-        const colorHex = appState.trackSettings.find((s) => s.trackIndex === trackIndex)?.color ?? '#1CD04B'
-        return {
-          trackIndex,
-          notes: tr.notes,
-          color: rgb01FromHex(colorHex, [0.11, 0.82, 0.29]),
-          startIdx: 0,
-          sustains: [] as typeof tr.notes,
-          maxEndPrefix: [] as number[],
-        }
-      })
-      .filter((t): t is NonNullable<typeof t> => Boolean(t))
-
-    let minMidi = 127
-    let maxMidi = 0
-    for (const tr of displayTracks) {
-      for (const n of tr.notes) {
-        if (n.midi < minMidi) minMidi = n.midi
-        if (n.midi > maxMidi) maxMidi = n.midi
-      }
-    }
-    if (minMidi > maxMidi) {
-      minMidi = 0
-      maxMidi = 127
+    type DisplayTrack = {
+      trackIndex: number
+      notes: typeof midi.tracks[number]['notes']
+      color: readonly [number, number, number]
+      startIdx: number
+      sustains: typeof midi.tracks[number]['notes']
+      maxEndPrefix: number[]
     }
 
-    // Precompute per-track prefix max end tick for faster sustain-window queries.
-    for (const tr of displayTracks) {
-      tr.maxEndPrefix = new Array(tr.notes.length)
-      let maxEnd = 0
-      for (let i = 0; i < tr.notes.length; i++) {
-        const end = tr.notes[i]?.endTicks ?? 0
-        if (end > maxEnd) maxEnd = end
-        tr.maxEndPrefix[i] = maxEnd
-      }
-    }
-
-    const pitchRange = Math.max(1, maxMidi - minMidi)
+    let displayTracks: DisplayTrack[] = []
+    let minMidi = 0
+    let maxMidi = 127
+    let pitchRange = 127
     const noteH = 4
     const wipeDurationSeconds = 0.35
 
     let displayPageIndex = 0
     let wipe: { from: number; to: number; startSeconds: number } | null = null
+    let wipeTo:
+      | { pageIndex: number; startTick: number; endTick: number; states: Array<{ startIdx: number; sustains: typeof midi.tracks[number]['notes'] }> }
+      | null = null
     let cachedPageStartTick = -1
     let cachedPageEndTick = -1
     let waveGain = 1
@@ -255,6 +246,69 @@ onMounted(async () => {
     const fpsCap = typeof fpsCapLayer?.params?.fps === 'number' && Number.isFinite(fpsCapLayer.params.fps) ? fpsCapLayer.params.fps : 0
     const fpsCapIntervalMs = fpsCap > 0 ? 1000 / Math.max(1, fpsCap) : 0
     let lastPianoRenderMs = -Infinity
+
+    const rebuildDisplayTracks = () => {
+      selectedTrackIndices.value = appState.trackSettings.filter((tr) => tr.enabled).map((tr) => tr.trackIndex)
+      rebuildNoteTracker()
+
+      displayTracks = selectedTrackIndices.value
+        .map((trackIndex) => {
+          const tr = midi.tracks[trackIndex]
+          if (!tr) return null
+          const colorHex = appState.trackSettings.find((s) => s.trackIndex === trackIndex)?.color ?? '#1CD04B'
+          return {
+            trackIndex,
+            notes: tr.notes,
+            color: rgb01FromHex(colorHex, [0.11, 0.82, 0.29]),
+            startIdx: 0,
+            sustains: [] as typeof tr.notes,
+            maxEndPrefix: [] as number[],
+          } satisfies DisplayTrack
+        })
+        .filter((t): t is NonNullable<typeof t> => Boolean(t))
+
+      minMidi = 127
+      maxMidi = 0
+      for (const tr of displayTracks) {
+        for (const n of tr.notes) {
+          if (n.midi < minMidi) minMidi = n.midi
+          if (n.midi > maxMidi) maxMidi = n.midi
+        }
+      }
+      if (minMidi > maxMidi) {
+        minMidi = 0
+        maxMidi = 127
+      }
+      pitchRange = Math.max(1, maxMidi - minMidi)
+
+      // Precompute per-track prefix max end tick for faster sustain-window queries.
+      for (const tr of displayTracks) {
+        tr.maxEndPrefix = new Array(tr.notes.length)
+        let maxEnd = 0
+        for (let i = 0; i < tr.notes.length; i++) {
+          const end = tr.notes[i]?.endTicks ?? 0
+          if (end > maxEnd) maxEnd = end
+          tr.maxEndPrefix[i] = maxEnd
+        }
+      }
+
+      // Force a sustain-window recompute next frame.
+      cachedPageStartTick = -1
+      cachedPageEndTick = -1
+
+      // Cancel any in-flight page transition (track selection changes can invalidate cached windows).
+      wipe = null
+      wipeTo = null
+    }
+
+    rebuildDisplayTracks()
+
+    watch(() => appState.theme, updateThemeCache, { deep: true })
+    watch(
+      () => appState.trackSettings.map((s) => [s.enabled, s.color]),
+      () => rebuildDisplayTracks(),
+      { deep: true },
+    )
 
     const loop = () => {
       if (unmounted || webGpuError.value) return
@@ -334,23 +388,37 @@ onMounted(async () => {
         // When paused/seeking, snap pages immediately (avoid wipe animation freezing at p=0).
         displayPageIndex = naturalPageIndex
         wipe = null
+        wipeTo = null
       } else {
         if (!wipe && naturalPageIndex !== displayPageIndex) {
           wipe = { from: displayPageIndex, to: naturalPageIndex, startSeconds: currentSeconds.value }
+
+          const toRange = timingInst.getPageTickRange(naturalPageIndex, pageBars)
+          const toStates = displayTracks.map((tr) => {
+            const idx = lowerBoundByStartTick(tr.notes, toRange.startTick)
+            const sustains: typeof tr.notes = []
+            for (let j = idx - 1; j >= 0; j--) {
+              if ((tr.maxEndPrefix[j] ?? 0) <= toRange.startTick) break
+              const n = tr.notes[j]!
+              if ((n.endTicks ?? 0) > toRange.startTick) sustains.push(n)
+            }
+            return { startIdx: idx, sustains }
+          })
+          wipeTo = { pageIndex: naturalPageIndex, startTick: toRange.startTick, endTick: toRange.endTick, states: toStates }
         }
         if (wipe) {
           const p = (currentSeconds.value - wipe.startSeconds) / wipeDurationSeconds
           if (p >= 1) {
             displayPageIndex = wipe.to
             wipe = null
+            wipeTo = null
           }
         }
       }
 
-      const tickRange = timingInst.getPageTickRange(displayPageIndex, pageBars)
-      const pageStartTick = tickRange.startTick
-      const pageEndTick = tickRange.endTick
-      const pageLenTicks = Math.max(1, pageEndTick - pageStartTick)
+      const fromRange = timingInst.getPageTickRange(displayPageIndex, pageBars)
+      const pageStartTick = fromRange.startTick
+      const pageEndTick = fromRange.endTick
 
       if (pageStartTick !== cachedPageStartTick || pageEndTick !== cachedPageEndTick) {
         const prevPageEndTick = cachedPageEndTick
@@ -403,60 +471,81 @@ onMounted(async () => {
 
       let rectCount = 0
 
-      // Playhead in current page.
-      const playT = clamp01((curTicks - pageStartTick) / pageLenTicks)
+      // Playhead: once a transition starts, use the *next* page window so the playhead doesn't stick at the old page end.
+      const playStartTick = wipeTo ? wipeTo.startTick : pageStartTick
+      const playEndTick = wipeTo ? wipeTo.endTick : pageEndTick
+      const playLenTicks = Math.max(1, playEndTick - playStartTick)
+      const playT = clamp01((curTicks - playStartTick) / playLenTicks)
       const playX = Math.min(Math.max(0, pw - 2), Math.floor(playT * pw))
       pushRect(playX, 0, 2, ph, inkR, inkG, inkB, 0.28)
 
       const padY = 18
       const usableH = Math.max(1, ph - padY * 2)
 
-      for (const tr of displayTracks) {
-        const [cr, cg, cb] = tr.color
-        for (const n of tr.sustains) {
-          const revealT = (curTicks - n.ticks) / Math.max(1, n.durationTicks)
-          if (revealT <= 0) continue
+      const pushWindow = (
+        startTick: number,
+        endTick: number,
+        trackStates: Array<{ startIdx: number; sustains: typeof midi.tracks[number]['notes'] }> | null,
+        wipeOutEase: number | null,
+      ) => {
+        const lenTicks = Math.max(1, endTick - startTick)
 
-          const nx0 = ((n.ticks - pageStartTick) / pageLenTicks) * pw
-          const nx1 = ((n.endTicks - pageStartTick) / pageLenTicks) * pw
-          const eased = easeOutExpo(clamp01(revealT))
-          const visibleEnd = nx0 + (nx1 - nx0) * eased
+        for (let ti = 0; ti < displayTracks.length; ti++) {
+          const tr = displayTracks[ti]!
+          const [cr, cg, cb] = tr.color
+          const state = trackStates?.[ti] ?? tr
 
-          let x0 = Math.max(0, nx0)
-          let x1 = Math.min(pw, visibleEnd)
-          if (wipe) x0 = x0 + (x1 - x0) * wipeEase
-          if (x1 <= x0) continue
+          for (const n of state.sustains) {
+            const revealT = (curTicks - n.ticks) / Math.max(1, n.durationTicks)
+            if (revealT <= 0) continue
 
-          const yNorm = (maxMidi - n.midi) / pitchRange
-          const y = padY + yNorm * (usableH - noteH)
+            const nx0 = ((n.ticks - startTick) / lenTicks) * pw
+            const nx1 = ((n.endTicks - startTick) / lenTicks) * pw
+            const eased = easeOutExpo(clamp01(revealT))
+            const visibleEnd = nx0 + (nx1 - nx0) * eased
 
-          const w = x1 - x0
-          pushRect(x0, y, w, noteH, cr, cg, cb, 1)
-        }
-        for (let i = tr.startIdx; i < tr.notes.length; i++) {
-          const n = tr.notes[i]!
-          if (n.ticks >= pageEndTick) break
+            let x0 = Math.max(0, nx0)
+            let x1 = Math.min(pw, visibleEnd)
+            if (wipeOutEase !== null) x0 = x0 + (x1 - x0) * wipeOutEase
+            if (x1 <= x0) continue
 
-          const revealT = (curTicks - n.ticks) / Math.max(1, n.durationTicks)
-          if (revealT <= 0) continue
+            const yNorm = (maxMidi - n.midi) / pitchRange
+            const y = padY + yNorm * (usableH - noteH)
 
-          const nx0 = ((n.ticks - pageStartTick) / pageLenTicks) * pw
-          const nx1 = ((n.endTicks - pageStartTick) / pageLenTicks) * pw
-          const eased = easeOutExpo(clamp01(revealT))
-          const visibleEnd = nx0 + (nx1 - nx0) * eased
+            const w = x1 - x0
+            pushRect(x0, y, w, noteH, cr, cg, cb, 1)
+          }
 
-          let x0 = Math.max(0, nx0)
-          let x1 = Math.min(pw, visibleEnd)
-          if (wipe) x0 = x0 + (x1 - x0) * wipeEase
-          if (x1 <= x0) continue
+          for (let i = state.startIdx; i < tr.notes.length; i++) {
+            const n = tr.notes[i]!
+            if (n.ticks >= endTick) break
 
-          const yNorm = (maxMidi - n.midi) / pitchRange
-          const y = padY + yNorm * (usableH - noteH)
+            const revealT = (curTicks - n.ticks) / Math.max(1, n.durationTicks)
+            if (revealT <= 0) continue
 
-          const w = x1 - x0
-          pushRect(x0, y, w, noteH, cr, cg, cb, 1)
+            const nx0 = ((n.ticks - startTick) / lenTicks) * pw
+            const nx1 = ((n.endTicks - startTick) / lenTicks) * pw
+            const eased = easeOutExpo(clamp01(revealT))
+            const visibleEnd = nx0 + (nx1 - nx0) * eased
+
+            let x0 = Math.max(0, nx0)
+            let x1 = Math.min(pw, visibleEnd)
+            if (wipeOutEase !== null) x0 = x0 + (x1 - x0) * wipeOutEase
+            if (x1 <= x0) continue
+
+            const yNorm = (maxMidi - n.midi) / pitchRange
+            const y = padY + yNorm * (usableH - noteH)
+
+            const w = x1 - x0
+            pushRect(x0, y, w, noteH, cr, cg, cb, 1)
+          }
         }
       }
+
+      // Old page wiping out.
+      pushWindow(pageStartTick, pageEndTick, null, wipe ? wipeEase : null)
+      // Next page starts immediately (prevents notes appearing mid-growth after the wipe).
+      if (wipeTo) pushWindow(wipeTo.startTick, wipeTo.endTick, wipeTo.states, null)
 
       try {
         const renderNowMs = performance.now()
@@ -812,6 +901,7 @@ onMounted(() => {
   <div class="player">
     <header class="player-header">
       <div class="player-title">{{ appState.title }}</div>
+      <button class="btn header-btn" type="button" @click="settingsOpen = true">Settings</button>
     </header>
 
     <main class="player-main">
@@ -867,6 +957,8 @@ onMounted(() => {
         <canvas ref="waveformCanvasEl" class="footer-canvas"></canvas>
       </div>
     </footer>
+
+    <PlayerSettingsOverlay v-if="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>
 
@@ -875,11 +967,16 @@ onMounted(() => {
   height: 100%;
   display: grid;
   grid-template-rows: 125fr 491fr 131fr;
+  position: relative;
 }
 
 .player-header,
 .player-footer {
   background: var(--bg-panel);
+}
+
+.player-header {
+  position: relative;
 }
 
 .player-header,
@@ -902,6 +999,36 @@ onMounted(() => {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   opacity: 0.9;
+}
+
+.header-btn {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%) translateX(10px);
+  padding: 10px 12px;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.player-header:hover .header-btn,
+.player-header:focus-within .header-btn {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+@media (hover: none) {
+  .header-btn {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(-50%);
+  }
 }
 
 .player-main {
