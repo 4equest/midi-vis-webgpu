@@ -80,7 +80,22 @@ export function detectChordNameFromMidiNotes(activeMidiNotes: number[]): string 
   if (!best.tonic) return bestName
 
   const chordPc = Note.chroma(best.tonic)
-  if (chordPc !== bassPc) return `${bestName}/${pcName(bassPc)}`
+  if (chordPc !== bassPc) {
+    const coreDegrees = new Set([1, 2, 3, 4, 5, 6, 7])
+    const corePcs = new Set<number>()
+    const len = Math.min(best.notes.length, best.intervals.length)
+    for (let i = 0; i < len; i++) {
+      const iv = best.intervals[i] ?? ''
+      const m = /^(\d+)/.exec(iv)
+      const deg = m ? Number.parseInt(m[1]!, 10) : Number.NaN
+      if (coreDegrees.has(deg)) corePcs.add(Note.chroma(best.notes[i]!))
+    }
+    if (corePcs.size === 0) {
+      const coreLen = Math.min(4, best.notes.length)
+      for (const n of best.notes.slice(0, coreLen)) corePcs.add(Note.chroma(n))
+    }
+    if (!corePcs.has(bassPc)) return `${bestName}/${pcName(bassPc)}`
+  }
   return bestName
 }
 

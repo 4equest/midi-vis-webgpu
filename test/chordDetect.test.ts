@@ -17,14 +17,24 @@ describe('detectChordNameFromMidiNotes', () => {
     expect(detectChordNameFromMidiNotes([60, 64, 67, 71])).toBe('Cmaj7')
   })
 
-  it('adds slash bass when bass differs from chord tonic', () => {
+  it('does not overuse slash chords for common inversions (keeps display stable)', () => {
     // Cmaj7 chord tones with E in the bass.
-    expect(detectChordNameFromMidiNotes([64, 67, 71, 72])).toBe('Cmaj7/E')
+    expect(detectChordNameFromMidiNotes([64, 67, 71, 72])).toBe('Cmaj7')
   })
 
   it('is stable regardless of input note ordering', () => {
     // Same pitch set as the previous test, but shuffled (bass is still E=64).
-    expect(detectChordNameFromMidiNotes([72, 71, 67, 64])).toBe('Cmaj7/E')
+    expect(detectChordNameFromMidiNotes([72, 71, 67, 64])).toBe('Cmaj7')
+  })
+
+  it('adds slash bass when the bass is outside core chord tones (e.g. 9th in bass)', () => {
+    // C9 chord tones with D in the bass.
+    expect(detectChordNameFromMidiNotes([50, 60, 64, 67, 70])).toBe('C9/D')
+  })
+
+  it('adds slash bass for add9 chords when the 9th is in bass', () => {
+    // CMadd9 chord tones with D in the bass.
+    expect(detectChordNameFromMidiNotes([50, 60, 64, 67])).toBe('CMadd9/D')
   })
 
   it('handles altered/jazz-like tensions from pitch classes', () => {
