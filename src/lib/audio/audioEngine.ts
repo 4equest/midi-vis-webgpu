@@ -119,6 +119,14 @@ export class AudioEngine {
   private playGeneration = 0
   private disposed = false
 
+  private releaseAllVoices(time: number): void {
+    for (const fx of this.channels.values()) {
+      fx.state.sustainDown = false
+      fx.state.sustainedNotes.clear()
+      fx.synth.releaseAll(time)
+    }
+  }
+
   constructor(cfg: AudioEngineConfig) {
     this.midi = cfg.midi
     this.audioMode = cfg.audioMode
@@ -649,6 +657,7 @@ export class AudioEngine {
     this.transport.stop()
     this.transport.cancel(0)
     this.stopExternal()
+    this.releaseAllVoices(Tone.now())
 
     // Restore master volume immediately (we may have muted on pause).
     this.output.gain.cancelScheduledValues(Tone.now())
@@ -680,6 +689,7 @@ export class AudioEngine {
     this.transport.pause()
     this.transport.cancel(0)
     this.stopExternal()
+    this.releaseAllVoices(Tone.now())
 
     // Hard-mute to avoid lingering scheduled releases.
     this.output.gain.cancelScheduledValues(Tone.now())

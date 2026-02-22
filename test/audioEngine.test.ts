@@ -59,6 +59,7 @@ vi.mock('tone', () => {
     connect() {}
     triggerAttack = vi.fn()
     triggerRelease = vi.fn()
+    releaseAll = vi.fn()
     triggerAttackRelease() {}
     dispose() {}
   }
@@ -471,6 +472,105 @@ describe('AudioEngine', () => {
     const vibrato = (Tone as any).__vibratos[0] as { depth: { setValueAtTime: ReturnType<typeof vi.fn> } }
     atCall![0](200)
     expect(vibrato.depth.setValueAtTime).toHaveBeenCalledWith(0.6, 200)
+  })
+
+  it('releases all voices on pause to avoid stuck/overlapping notes', async () => {
+    const Tone = await import('tone')
+    const { AudioEngine } = await import('../src/lib/audio/audioEngine')
+
+    ;(Tone as any).__polySynths.length = 0
+    const transport = (Tone as any).__transport as { scheduleOnce: ReturnType<typeof vi.fn> }
+    transport.scheduleOnce.mockClear()
+
+    const engine = new AudioEngine({
+      midi: {
+        tracks: [
+          {
+            index: 0,
+            name: '',
+            channel: 0,
+            isDrum: false,
+            notes: [
+              {
+                midi: 60,
+                velocity: 1,
+                ticks: 0,
+                durationTicks: 480,
+                endTicks: 480,
+                time: 0,
+                duration: 5,
+                endTime: 5,
+              },
+            ],
+            pitchBends: [],
+            controlChanges: [],
+            channelAftertouch: [],
+            noteAftertouch: [],
+          },
+        ],
+      } as any,
+      audioMode: 'midi',
+    })
+
+    await engine.playFrom(0)
+
+    const noteOn = transport.scheduleOnce.mock.calls.find((c) => c[1] === 0)
+    expect(noteOn).toBeTruthy()
+    noteOn![0](0)
+
+    engine.pause()
+
+    const polySynth = (Tone as any).__polySynths[0] as { releaseAll: ReturnType<typeof vi.fn> }
+    expect(polySynth.releaseAll).toHaveBeenCalled()
+  })
+
+  it('releases all voices when restarting playFrom (seek) to avoid overlaps', async () => {
+    const Tone = await import('tone')
+    const { AudioEngine } = await import('../src/lib/audio/audioEngine')
+
+    ;(Tone as any).__polySynths.length = 0
+    const transport = (Tone as any).__transport as { scheduleOnce: ReturnType<typeof vi.fn> }
+    transport.scheduleOnce.mockClear()
+
+    const engine = new AudioEngine({
+      midi: {
+        tracks: [
+          {
+            index: 0,
+            name: '',
+            channel: 0,
+            isDrum: false,
+            notes: [
+              {
+                midi: 60,
+                velocity: 1,
+                ticks: 0,
+                durationTicks: 480,
+                endTicks: 480,
+                time: 0,
+                duration: 5,
+                endTime: 5,
+              },
+            ],
+            pitchBends: [],
+            controlChanges: [],
+            channelAftertouch: [],
+            noteAftertouch: [],
+          },
+        ],
+      } as any,
+      audioMode: 'midi',
+    })
+
+    await engine.playFrom(0)
+    const noteOn = transport.scheduleOnce.mock.calls.find((c) => c[1] === 0)
+    expect(noteOn).toBeTruthy()
+    noteOn![0](0)
+
+    await engine.playFrom(1)
+
+    const polySynth = (Tone as any).__polySynths[0] as { releaseAll: ReturnType<typeof vi.fn> }
+    expect(polySynth.releaseAll).toHaveBeenCalled()
   })
 })
 
