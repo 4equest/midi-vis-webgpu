@@ -13,6 +13,7 @@ import { easeOutExpo } from '../lib/visual/easing'
 import { getGpuDevice, onGpuDeviceLost, onGpuUncapturedError } from '../lib/webgpu/gpuDevice'
 import { PostProcessChain } from '../lib/webgpu/postProcessChain'
 import { RectRenderer } from '../lib/webgpu/rectRenderer'
+import { getChordTrackIndices, getDisplayTrackIndices } from '../lib/state/trackSettings'
 import PlayerSettingsOverlay from '../components/PlayerSettingsOverlay.vue'
 
 const router = useRouter()
@@ -30,6 +31,7 @@ onMounted(() => {
 })
 
 const selectedTrackIndices = ref<number[]>([])
+const chordTrackIndices = ref<number[]>([])
 const settingsOpen = ref(false)
 
 const isPlaying = ref(false)
@@ -115,7 +117,8 @@ onMounted(async () => {
     if (!midi || !t) throw new Error('MIDI not loaded.')
 
     // Initialize display tracks (can be updated live from the in-player settings overlay).
-    selectedTrackIndices.value = appState.trackSettings.filter((tr) => tr.enabled).map((tr) => tr.trackIndex)
+    selectedTrackIndices.value = getDisplayTrackIndices(appState.trackSettings)
+    chordTrackIndices.value = getChordTrackIndices(appState.trackSettings)
 
     audio = new AudioEngine({
       midi,
@@ -132,7 +135,7 @@ onMounted(async () => {
     const rebuildNoteTracker = () => {
       noteTracker = new ActiveNoteTracker({
         midi,
-        trackIndices: selectedTrackIndices.value,
+        trackIndices: chordTrackIndices.value,
         includeDrums: false,
       })
       noteTracker.seek(currentSeconds.value)
@@ -248,7 +251,8 @@ onMounted(async () => {
     let lastPianoRenderMs = -Infinity
 
     const rebuildDisplayTracks = () => {
-      selectedTrackIndices.value = appState.trackSettings.filter((tr) => tr.enabled).map((tr) => tr.trackIndex)
+      selectedTrackIndices.value = getDisplayTrackIndices(appState.trackSettings)
+      chordTrackIndices.value = getChordTrackIndices(appState.trackSettings)
       rebuildNoteTracker()
 
       displayTracks = selectedTrackIndices.value
@@ -303,12 +307,36 @@ onMounted(async () => {
 
     rebuildDisplayTracks()
 
+    const updateDisplayTrackColors = () => {
+      const byIndex = new Map<number, string>()
+      for (const s of appState.trackSettings) byIndex.set(s.trackIndex, s.color)
+      for (const tr of displayTracks) {
+        const colorHex = byIndex.get(tr.trackIndex) ?? '#1CD04B'
+        tr.color = rgb01FromHex(colorHex, [0.11, 0.82, 0.29])
+      }
+    }
+
     watch(() => appState.theme, updateThemeCache, { deep: true })
     watch(
-      () => appState.trackSettings.map((s) => [s.enabled, s.color]),
+      () => appState.trackSettings.map((s) => [s.enabled, s.chordEnabled]),
       () => rebuildDisplayTracks(),
       { deep: true },
     )
+    watch(
+      () => appState.trackSettings.map((s) => s.color),
+      () => updateDisplayTrackColors(),
+      { deep: true },
+    )
+    watch(() => appState.measuresToDisplay, () => {
+      const pageBars = Math.max(1, Math.floor(appState.measuresToDisplay))
+      const curTicks = t.secondsToTicks(currentSeconds.value)
+      const pos = t.getBarBeatAtTicks(curTicks)
+      displayPageIndex = t.getPageIndexForBar(pos.bar, pageBars)
+      cachedPageStartTick = -1
+      cachedPageEndTick = -1
+      wipe = null
+      wipeTo = null
+    })
 
     const loop = () => {
       if (unmounted || webGpuError.value) return

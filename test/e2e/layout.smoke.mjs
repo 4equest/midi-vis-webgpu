@@ -376,36 +376,91 @@ async function main() {
         log('e2e: waiting for tracks page')
         await waitHash('#/tracks')
 
-        // Click Start.
-        log('e2e: clicking start')
-        const startPt = await evalJson(
+        const clickStart = async () => {
+          log('e2e: clicking start')
+          const startPt = await evalJson(
+            cdp,
+            `(() => {
+              const btn = [...document.querySelectorAll('button')].find(b => (b.textContent||'').trim() === 'Start')
+              if (!btn) return null
+              btn.scrollIntoView({ block: 'center', inline: 'center' })
+              const r = btn.getBoundingClientRect()
+              return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }
+            })()`,
+          )
+          if (!startPt) throw new Error('Start button not found on TrackSelectPage.')
+          if (!Number.isFinite(startPt.x) || !Number.isFinite(startPt.y) || startPt.w < 5 || startPt.h < 5) {
+            throw new Error(`Start button has invalid box: ${JSON.stringify(startPt)}`)
+          }
+          await cdp.send('Input.dispatchMouseEvent', {
+            type: 'mousePressed',
+            x: startPt.x,
+            y: startPt.y,
+            button: 'left',
+            clickCount: 1,
+          })
+          await cdp.send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased',
+            x: startPt.x,
+            y: startPt.y,
+            button: 'left',
+            clickCount: 1,
+          })
+        }
+
+        // Trigger and clear the "no tracks enabled" validation error without requiring a second Start click.
+        log('e2e: disabling all display tracks')
+        await waitForSelector('.track-row')
+        const disableRes = await evalJson(
           cdp,
           `(() => {
-            const btn = [...document.querySelectorAll('button')].find(b => (b.textContent||'').trim() === 'Start')
-            if (!btn) return null
-            btn.scrollIntoView({ block: 'center', inline: 'center' })
-            const r = btn.getBoundingClientRect()
-            return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }
+            const rows = [...document.querySelectorAll('.track-row')]
+            if (!rows.length) return null
+            const showCbs = rows
+              .map(r => r.querySelector('input[type="checkbox"][title="Show on piano roll"]'))
+              .filter((x) => x && x instanceof HTMLInputElement)
+            let clicked = 0
+            for (const cb of showCbs) {
+              if (cb.checked) { cb.click(); clicked++ }
+            }
+            return { showCount: showCbs.length, clicked, anyEnabled: showCbs.some(cb => cb.checked) }
           })()`,
         )
-        if (!startPt) throw new Error('Start button not found on TrackSelectPage.')
-        if (!Number.isFinite(startPt.x) || !Number.isFinite(startPt.y) || startPt.w < 5 || startPt.h < 5) {
-          throw new Error(`Start button has invalid box: ${JSON.stringify(startPt)}`)
+        if (!disableRes || disableRes.showCount < 1) throw new Error('Track show checkboxes not found on TrackSelectPage.')
+        if (disableRes.anyEnabled) throw new Error('Failed to disable all display tracks.')
+
+        await clickStart()
+        const errPollStart = Date.now()
+        while (true) {
+          const err = await evalJson(cdp, `(() => document.querySelector('.error')?.textContent?.trim() ?? null)()`)
+          if (err) break
+          if (Date.now() - errPollStart > 5000) throw new Error('Expected track error did not appear.')
+          await sleep(200)
         }
-        await cdp.send('Input.dispatchMouseEvent', {
-          type: 'mousePressed',
-          x: startPt.x,
-          y: startPt.y,
-          button: 'left',
-          clickCount: 1,
-        })
-        await cdp.send('Input.dispatchMouseEvent', {
-          type: 'mouseReleased',
-          x: startPt.x,
-          y: startPt.y,
-          button: 'left',
-          clickCount: 1,
-        })
+
+        log('e2e: re-enabling a display track (should clear error)')
+        const enableRes = await evalJson(
+          cdp,
+          `(() => {
+            const row = document.querySelectorAll('.track-row')[0]
+            const cb = row?.querySelector('input[type="checkbox"][title="Show on piano roll"]')
+            if (!cb || !(cb instanceof HTMLInputElement)) return null
+            if (!cb.checked) cb.click()
+            return { checked: cb.checked }
+          })()`,
+        )
+        if (!enableRes || !enableRes.checked) throw new Error('Failed to re-enable a display track checkbox.')
+
+        const clearPollStart = Date.now()
+        while (true) {
+          const err = await evalJson(cdp, `(() => document.querySelector('.error')?.textContent?.trim() ?? null)()`)
+          if (!err) break
+          if (Date.now() - clearPollStart > 5000) throw new Error(`Track error did not clear after enabling a track (got: ${err})`)
+          await sleep(200)
+        }
+
+        // Click Start (for real).
+        await clickStart()
 
         // Wait for PlayerPage or surface a TrackSelect error message.
         log('e2e: waiting for player page')

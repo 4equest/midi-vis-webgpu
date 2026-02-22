@@ -11,6 +11,7 @@ export type AudioMode = 'midi' | 'external'
 export interface TrackSetting {
   trackIndex: number
   enabled: boolean
+  chordEnabled: boolean
   color: string
 }
 
@@ -86,6 +87,7 @@ export const appActions = {
     appState.trackSettings = parsed.tracks.map((t) => ({
       trackIndex: t.index,
       enabled: defaultIndices.has(t.index),
+      chordEnabled: defaultIndices.has(t.index),
       color: NOTE_COLORS[t.index % NOTE_COLORS.length] ?? NOTE_COLORS[0],
     }))
   },
